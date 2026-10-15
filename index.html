@@ -41,6 +41,12 @@
       <button class="btn" id="guardar">Guardar link</button>
     </div>
 
+    <div id="instalar" class="hidden" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+      <button class="btn" id="btnInstalar" style="display:none">📲 Instalar app</button>
+      <div id="pasos" class="sub"></div>
+      <button class="btn sec" id="sinInstalar">Abrir sin instalar</button>
+    </div>
+
     <div id="fallo" class="hidden" style="display:flex;flex-direction:column;align-items:center;gap:10px">
       <a class="btn" id="directo" target="_self">Abrir e iniciar sesión</a>
       <button class="btn sec" id="reintentar">Reintentar</button>
@@ -64,13 +70,49 @@
     return u.split('#')[0];
   }
 
-  if (new URLSearchParams(location.search).has('reset')) { try { localStorage.removeItem(CLAVE); } catch (e) {} history.replaceState(null, '', location.pathname); }
+  // Modo 'directo': abre tu app de Google en la misma ventana (funciona siempre, con tu sesión normal).
+  const MODO = 'zero-fugas-modo';
+  const modo = () => { try { return localStorage.getItem(MODO) || ''; } catch (e) { return ''; } };
+  const setModo = v => { try { localStorage.setItem(MODO, v); } catch (e) {} };
+
+  if (new URLSearchParams(location.search).has('reset')) {
+    try { localStorage.removeItem(CLAVE); localStorage.removeItem(MODO); } catch (e) {}
+    history.replaceState(null, '', location.pathname);
+  }
+
+  // ¿Se abrió desde el ícono instalado o desde el navegador?
+  const instalada = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: minimal-ui)').matches || navigator.standalone === true;
+  let promptInstalar = null;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); promptInstalar = e; $('btnInstalar').style.display = ''; });
+  window.addEventListener('appinstalled', () => { $('btnInstalar').style.display = 'none'; $('pasos').textContent = '¡Listo! Ya la tienes instalada. Ábrela desde el ícono ⚡ de tu pantalla.'; });
+
+  function ofrecerInstalar(url) {
+    $('sinInstalar').onclick = () => irDirecto(url);
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    $('pasos').innerHTML = (promptInstalar ? 'O también: ' : '') + (ios
+      ? 'En Safari toca <b>Compartir</b> (el cuadrito con flecha) → <b>Agregar a inicio</b>.'
+      : 'En Chrome toca el menú <b>⋮</b> → <b>Instalar app</b> o <b>Agregar a pantalla principal</b>. En el computador, el ícono de instalar aparece en la barra de direcciones.');
+    $('btnInstalar').style.display = promptInstalar ? '' : 'none';
+    estado('instalar', 'Instala Zero Fugas en tu pantalla. Después ábrela siempre desde el ícono ⚡ y entrará directo.');
+  }
+  $('btnInstalar').onclick = async () => {
+    if (!promptInstalar) return;
+    promptInstalar.prompt();
+    try { await promptInstalar.userChoice; } catch (e) {}
+    promptInstalar = null; $('btnInstalar').style.display = 'none';
+  };
+
+  function irDirecto(url) {
+    estado('cargando', 'Abriendo Zero Fugas…');
+    location.replace(url); // sin dejar rastro en el historial: "atrás" cierra la app
+  }
 
   let timer = null;
   function estado(cual, texto) {
     $('cargando').classList.toggle('hidden', cual !== 'cargando');
     $('config').classList.toggle('hidden', cual !== 'config');
     $('fallo').classList.toggle('hidden', cual !== 'fallo');
+    $('instalar').classList.toggle('hidden', cual !== 'instalar');
     $('msg').textContent = texto;
   }
 
@@ -85,18 +127,19 @@
     if (!navigator.onLine) return estado('fallo', 'Sin internet. Conéctate y toca Reintentar.');
     $('directo').href = url;
     $('panel').classList.remove('off'); $('app').classList.remove('on');
+    if (modo() === 'directo') return instalada() ? irDirecto(url) : ofrecerInstalar(url);
     estado('cargando', 'Cargando…');
     $('app').src = url;
     clearTimeout(timer);
-    timer = setTimeout(() => estado('fallo',
-      'No pudo abrir dentro de la app. Normalmente es porque hay que iniciar sesión en Google: ábrela directo una vez, entra con tu cuenta y vuelve aquí.'), 15000);
+    // Si Google no deja abrirla por dentro, se cambia sola a modo directo y lo recuerda.
+    timer = setTimeout(() => { setModo('directo'); instalada() ? irDirecto(url) : ofrecerInstalar(url); }, 8000);
   }
 
   window.addEventListener('message', e => {
     let host = '';
     try { host = new URL(e.origin).hostname; } catch (er) {}
     if (e.data === 'zero-fugas-ok' && (host.endsWith('.googleusercontent.com') || host === 'script.google.com')) {
-      clearTimeout(timer);
+      clearTimeout(timer); setModo('dentro');
       $('app').classList.add('on'); $('panel').classList.add('off');
     }
   });
