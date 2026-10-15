@@ -55,7 +55,14 @@
   const $ = id => document.getElementById(id);
   const leer = () => { try { return localStorage.getItem(CLAVE) || ''; } catch (e) { return ''; } };
   const guardar = v => { try { localStorage.setItem(CLAVE, v); } catch (e) {} };
-  const valido = u => /^https:\/\/script\.google\.com\/(a\/[^/]+\/)?macros\/s\/[\w-]+\/exec/.test(u);
+  // Acepta cuentas personales (/macros/s/…/exec) y de empresa (/a/macros/dominio/s/…/exec)
+  const valido = u => /^https:\/\/script\.google\.com\/(a\/macros\/[^/]+|macros)\/s\/[\w-]+\/exec/.test(u);
+  function limpiar(u) {
+    u = (u || '').trim().replace(/^<|>$/g, '');
+    if (/^AKfy[\w-]{20,}$/.test(u)) u = 'https://script.google.com/macros/s/' + u + '/exec'; // pegaron solo el ID
+    u = u.replace(/^http:\/\//, 'https://');
+    return u.split('#')[0];
+  }
 
   if (new URLSearchParams(location.search).has('reset')) { try { localStorage.removeItem(CLAVE); } catch (e) {} history.replaceState(null, '', location.pathname); }
 
@@ -95,8 +102,13 @@
   });
 
   $('guardar').onclick = () => {
-    const u = $('link').value.trim();
-    if (!valido(u)) { $('msg').textContent = 'Ese link no parece el de tu app. Debe empezar por https://script.google.com/ y terminar en /exec'; return; }
+    const u = limpiar($('link').value);
+    if (!valido(u)) {
+      $('msg').textContent = /\/dev(\?|$)/.test(u)
+        ? 'Ese es el link de prueba (/dev). Usa el de "Gestionar implementaciones", que termina en /exec.'
+        : 'Ese link no parece el de tu app. Cópialo en Apps Script → Implementar → Gestionar implementaciones → URL de la aplicación web (termina en /exec).';
+      return;
+    }
     guardar(u); abrir();
   };
   $('reintentar').onclick = abrir;
