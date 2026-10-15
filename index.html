@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>Zero Fugas</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Zero Fugas">
+<style>
+  html,body{margin:0;height:100%;background:#0f1115;color:#eef0f4;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  #app{position:fixed;inset:0;width:100%;height:100%;border:0;opacity:0;pointer-events:none;transition:opacity .25s}
+  #app.on{opacity:1;pointer-events:auto}
+  #panel{position:fixed;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center}
+  #panel.off{display:none}
+  #panel img{width:84px;height:84px}
+  h1{font-size:22px;margin:0}
+  .sub{color:#8b919e;font-size:14px;max-width:340px}
+  input{width:100%;max-width:360px;box-sizing:border-box;background:#171a21;color:#eef0f4;border:1px solid #272b35;border-radius:12px;padding:12px;font-size:16px}
+  .btn{display:inline-block;padding:12px 20px;border-radius:12px;border:0;background:#eef0f4;color:#0f1115;font-weight:700;font-size:15px;text-decoration:none;cursor:pointer;font-family:inherit}
+  .btn.sec{background:none;color:#eef0f4;border:1px solid #272b35}
+  .spin{width:30px;height:30px;border:3px solid #272b35;border-top-color:#eef0f4;border-radius:50%;animation:g .8s linear infinite}
+  @keyframes g{to{transform:rotate(360deg)}}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+  <div id="panel">
+    <img src="icon-192.png" alt="">
+    <h1>Zero Fugas</h1>
+    <div id="cargando"><div class="spin"></div></div>
+    <div id="msg" class="sub">Cargando…</div>
+
+    <div id="config" class="hidden" style="width:100%;display:flex;flex-direction:column;align-items:center;gap:12px">
+      <input id="link" type="url" inputmode="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec" aria-label="Link de tu app">
+      <button class="btn" id="guardar">Guardar link</button>
+    </div>
+
+    <div id="fallo" class="hidden" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+      <a class="btn" id="directo" target="_self">Abrir e iniciar sesión</a>
+      <button class="btn sec" id="reintentar">Reintentar</button>
+    </div>
+  </div>
+
+  <iframe id="app" title="Zero Fugas" allow="clipboard-write"></iframe>
+
+<script>
+  // El link de tu app (el que termina en /exec) se guarda solo en este celular, no en GitHub.
+  const CLAVE = 'zero-fugas-url';
+  const $ = id => document.getElementById(id);
+  const leer = () => { try { return localStorage.getItem(CLAVE) || ''; } catch (e) { return ''; } };
+  const guardar = v => { try { localStorage.setItem(CLAVE, v); } catch (e) {} };
+  const valido = u => /^https:\/\/script\.google\.com\/(a\/[^/]+\/)?macros\/s\/[\w-]+\/exec/.test(u);
+
+  if (new URLSearchParams(location.search).has('reset')) { try { localStorage.removeItem(CLAVE); } catch (e) {} history.replaceState(null, '', location.pathname); }
+
+  let timer = null;
+  function estado(cual, texto) {
+    $('cargando').classList.toggle('hidden', cual !== 'cargando');
+    $('config').classList.toggle('hidden', cual !== 'config');
+    $('fallo').classList.toggle('hidden', cual !== 'fallo');
+    $('msg').textContent = texto;
+  }
+
+  function pedirLink() {
+    $('panel').classList.remove('off'); $('app').classList.remove('on');
+    estado('config', 'Pega una sola vez el link de tu app (Apps Script → Implementar → Gestionar implementaciones). Queda guardado en este celular.');
+  }
+
+  function abrir() {
+    const url = leer();
+    if (!valido(url)) return pedirLink();
+    if (!navigator.onLine) return estado('fallo', 'Sin internet. Conéctate y toca Reintentar.');
+    $('directo').href = url;
+    $('panel').classList.remove('off'); $('app').classList.remove('on');
+    estado('cargando', 'Cargando…');
+    $('app').src = url;
+    clearTimeout(timer);
+    timer = setTimeout(() => estado('fallo',
+      'No pudo abrir dentro de la app. Normalmente es porque hay que iniciar sesión en Google: ábrela directo una vez, entra con tu cuenta y vuelve aquí.'), 15000);
+  }
+
+  window.addEventListener('message', e => {
+    let host = '';
+    try { host = new URL(e.origin).hostname; } catch (er) {}
+    if (e.data === 'zero-fugas-ok' && (host.endsWith('.googleusercontent.com') || host === 'script.google.com')) {
+      clearTimeout(timer);
+      $('app').classList.add('on'); $('panel').classList.add('off');
+    }
+  });
+
+  $('guardar').onclick = () => {
+    const u = $('link').value.trim();
+    if (!valido(u)) { $('msg').textContent = 'Ese link no parece el de tu app. Debe empezar por https://script.google.com/ y terminar en /exec'; return; }
+    guardar(u); abrir();
+  };
+  $('reintentar').onclick = abrir;
+  window.addEventListener('online', () => { if (!$('app').classList.contains('on')) abrir(); });
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  abrir();
+</script>
+</body>
+</html>
