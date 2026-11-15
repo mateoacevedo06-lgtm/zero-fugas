@@ -1,632 +1,164 @@
-/**
- * ⚡ Zero Fugas v2 — Control Financiero Quincenal (Mateo)
- * Pega este archivo completo en "Código.gs" (Extensiones > Apps Script).
- * La primera vez crea solas las pestañas y las quincenas de todo el año.
- */
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>Zero Fugas</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Zero Fugas">
+<style>
+  html,body{margin:0;height:100%;background:#0f1115;color:#eef0f4;font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  #app{position:fixed;inset:0;width:100%;height:100%;border:0;opacity:0;pointer-events:none;transition:opacity .25s}
+  #app.on{opacity:1;pointer-events:auto}
+  #panel{position:fixed;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center}
+  #panel.off{display:none}
+  #panel img{width:84px;height:84px}
+  h1{font-size:22px;margin:0}
+  .sub{color:#8b919e;font-size:14px;max-width:340px}
+  input{width:100%;max-width:360px;box-sizing:border-box;background:#171a21;color:#eef0f4;border:1px solid #272b35;border-radius:12px;padding:12px;font-size:16px}
+  .btn{display:inline-block;padding:12px 20px;border-radius:12px;border:0;background:#eef0f4;color:#0f1115;font-weight:700;font-size:15px;text-decoration:none;cursor:pointer;font-family:inherit}
+  .btn.sec{background:none;color:#eef0f4;border:1px solid #272b35}
+  .spin{width:30px;height:30px;border:3px solid #272b35;border-top-color:#eef0f4;border-radius:50%;animation:g .8s linear infinite}
+  @keyframes g{to{transform:rotate(360deg)}}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+  <div id="panel">
+    <img src="icon-192.png" alt="">
+    <h1>Zero Fugas</h1>
+    <div id="cargando"><div class="spin"></div></div>
+    <div id="msg" class="sub">Cargando…</div>
 
-const ZONA = 'America/Bogota';
-const DIA = 864e5;
+    <div id="config" class="hidden" style="width:100%;display:flex;flex-direction:column;align-items:center;gap:12px">
+      <input id="link" type="url" inputmode="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec" aria-label="Link de tu app">
+      <button class="btn" id="guardar">Guardar link</button>
+    </div>
 
-const HOJAS = {
-  Config:        ['Clave', 'Valor'],
-  Bloques:       ['Id', 'Nombre', 'Icono', 'Color', 'Orden'],
-  Subcategorias: ['Id', 'BloqueId', 'Nombre', 'Tipo', 'Sugerido', 'TotalCredito', 'Inicial', 'Activa', 'Orden'],
-  Quincenas:     ['Quincena', 'Ingreso', 'Creada'],
-  Movimientos:   ['Quincena', 'SubId', 'Bloque', 'Subcategoria', 'Tipo', 'Monto', 'Estado', 'FechaEstado'],
-  Motivos:       ['Id', 'Fecha', 'Quincena', 'SubId', 'Subcategoria', 'Monto', 'Motivo'],
-  Retiros:       ['Id', 'Fecha', 'SubId', 'Subcategoria', 'Monto', 'Nota'],
-};
-const COL_TEXTO = {
-  Config: ['Valor'], Bloques: ['Id'], Subcategorias: ['Id', 'BloqueId'],
-  Quincenas: ['Quincena', 'Creada'], Movimientos: ['Quincena', 'SubId', 'FechaEstado'],
-  Motivos: ['Id', 'Fecha', 'Quincena', 'SubId'], Retiros: ['Id', 'Fecha', 'SubId'],
-};
-const COL_PLATA = {
-  Subcategorias: ['Sugerido', 'TotalCredito', 'Inicial'], Quincenas: ['Ingreso'],
-  Movimientos: ['Monto'], Motivos: ['Monto'], Retiros: ['Monto'],
-};
-const TIPOS = ['gasto', 'ahorro', 'credito'];
+    <div id="instalar" class="hidden" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+      <button class="btn" id="btnInstalar" style="display:none">📲 Instalar app</button>
+      <div id="pasos" class="sub"></div>
+      <button class="btn sec" id="sinInstalar">Abrir sin instalar</button>
+    </div>
 
-const BLOQUES_INI = [
-  { Id: 'b1', Nombre: 'Efectivo & Gastos Personales', Icono: '💵', Color: '#2ecc71', Orden: 1 },
-  { Id: 'b2', Nombre: 'Cajitas Nu (Ahorro)', Icono: '🟣', Color: '#a259ff', Orden: 2 },
-  { Id: 'b3', Nombre: 'Bancolombia & Compromisos', Icono: '🏛️', Color: '#ffd200', Orden: 3 },
-];
-function sub_(id, b, nombre, tipo, monto) {
-  return { Id: id, BloqueId: b, Nombre: nombre, Tipo: tipo, Sugerido: monto,
-           TotalCredito: 0, Inicial: 0, Activa: 'si', Orden: Number(id.slice(1)) };
-}
-const SUBS_INI = [
-  sub_('s1', 'b1', 'Casa / Aporte', 'gasto', 300000),
-  sub_('s2', 'b1', 'Comida / Mercado', 'gasto', 150000),
-  sub_('s3', 'b1', 'Ocio / Salidas (Tope)', 'gasto', 80000),
-  sub_('s4', 'b1', 'Gasolina Moto', 'gasto', 60000),
-  sub_('s5', 'b1', 'Parqueadero', 'gasto', 0),
-  sub_('s6', 'b1', 'Perro / Paseo', 'gasto', 55000),
-  sub_('s7', 'b1', 'Motilada / Cuidado', 'gasto', 40000),
-  sub_('s8', 'b2', 'Cajita Matrimonio', 'ahorro', 150000),
-  sub_('s9', 'b2', 'Cajita Moto', 'ahorro', 100000),
-  sub_('s10', 'b2', 'Cajita Emprendimiento', 'ahorro', 85000),
-  sub_('s11', 'b2', 'Cajita Salud Mamá', 'ahorro', 30000),
-  sub_('s12', 'b2', 'Cajita Salud Rocky', 'ahorro', 20000),
-  sub_('s13', 'b2', 'Colchón Líquido Libre', 'ahorro', 175000),
-  sub_('s14', 'b3', 'Servicios (Somos)', 'gasto', 130000),
-  sub_('s15', 'b3', 'Crédito Bancolombia', 'credito', 75000),
-  sub_('s16', 'b3', 'Crédito Sistecrédito', 'credito', 0),
-  sub_('s17', 'b3', 'Crédito Tarjeta Nu', 'credito', 0),
-  sub_('s18', 'b3', 'Bolsillo Iglesia', 'gasto', 50000),
-];
+    <div id="fallo" class="hidden" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+      <a class="btn" id="directo" target="_self">Abrir e iniciar sesión</a>
+      <button class="btn sec" id="reintentar">Reintentar</button>
+    </div>
+  </div>
 
-function doGet() {
-  inicializar_();
-  return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('Zero Fugas')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    // Permite abrirla dentro de la app instalable (Zero Fugas en GitHub Pages). Sigue pidiendo TU cuenta de Google.
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-}
+  <iframe id="app" title="Zero Fugas" allow="clipboard-write"></iframe>
 
-/* =================== Hojas =================== */
-
-function letra_(i) { return String.fromCharCode(65 + i); }
-
-function hoja_(n) {
-  const ss = SpreadsheetApp.getActive();
-  let h = ss.getSheetByName(n);
-  if (!h) {
-    h = ss.insertSheet(n);
-    const cols = HOJAS[n];
-    (COL_TEXTO[n] || []).forEach(c => { const l = letra_(cols.indexOf(c)); h.getRange(l + ':' + l).setNumberFormat('@'); });
-    (COL_PLATA[n] || []).forEach(c => { const l = letra_(cols.indexOf(c)); h.getRange(l + ':' + l).setNumberFormat('$#,##0'); });
-    h.getRange(1, 1, 1, cols.length).setValues([cols]).setFontWeight('bold');
-    h.setFrozenRows(1);
+<script>
+  // El link de tu app (el que termina en /exec) se guarda solo en este celular, no en GitHub.
+  const CLAVE = 'zero-fugas-url';
+  const $ = id => document.getElementById(id);
+  const leer = () => { try { return localStorage.getItem(CLAVE) || ''; } catch (e) { return ''; } };
+  const guardar = v => { try { localStorage.setItem(CLAVE, v); } catch (e) {} };
+  // Acepta cuentas personales (/macros/s/…/exec) y de empresa (/a/macros/dominio/s/…/exec)
+  const valido = u => /^https:\/\/script\.google\.com\/(a\/macros\/[^/]+|macros)\/s\/[\w-]+\/exec/.test(u);
+  function limpiar(u) {
+    u = (u || '').trim().replace(/^<|>$/g, '');
+    if (/^AKfy[\w-]{20,}$/.test(u)) u = 'https://script.google.com/macros/s/' + u + '/exec'; // pegaron solo el ID
+    u = u.replace(/^http:\/\//, 'https://');
+    return u.split('#')[0];
   }
-  return h;
-}
 
-function leer_(n) {
-  const h = hoja_(n), cols = HOJAS[n], last = h.getLastRow();
-  if (last < 2) return [];
-  return h.getRange(2, 1, last - 1, cols.length).getValues()
-    .map((r, i) => {
-      const o = { _fila: i + 2 };
-      cols.forEach((c, j) => { o[c] = r[j] instanceof Date ? fecha_(r[j]) : r[j]; });
-      return o;
-    })
-    .filter(o => cols.some(c => o[c] !== '' && o[c] !== null));
-}
+  // Modo 'directo': abre tu app de Google en la misma ventana (funciona siempre, con tu sesión normal).
+  const MODO = 'zero-fugas-modo';
+  const modo = () => { try { return localStorage.getItem(MODO) || ''; } catch (e) { return ''; } };
+  const setModo = v => { try { localStorage.setItem(MODO, v); } catch (e) {} };
 
-function escribir_(n, objs) {
-  const h = hoja_(n), cols = HOJAS[n], last = h.getLastRow();
-  if (last > 1) h.getRange(2, 1, last - 1, cols.length).clearContent();
-  if (objs.length) {
-    h.getRange(2, 1, objs.length, cols.length)
-      .setValues(objs.map(o => cols.map(c => (o[c] === undefined || o[c] === null) ? '' : o[c])));
+  if (new URLSearchParams(location.search).has('reset')) {
+    try { localStorage.removeItem(CLAVE); localStorage.removeItem(MODO); } catch (e) {}
+    history.replaceState(null, '', location.pathname);
   }
-}
 
-function fecha_(d) { return Utilities.formatDate(d, ZONA, 'yyyy-MM-dd HH:mm'); }
-function ahora_() { return fecha_(new Date()); }
-function uid_() { return 'x' + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36); }
-function txt_(v) { return String(v == null ? '' : v).trim(); }
-function mapa_(arr) { const m = {}; arr.forEach(x => { m[String(x.Id)] = x; }); return m; }
+  // ¿Se abrió desde el ícono instalado o desde el navegador?
+  const instalada = () => matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: minimal-ui)').matches || navigator.standalone === true;
+  let promptInstalar = null;
+  window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); promptInstalar = e; $('btnInstalar').style.display = ''; });
+  window.addEventListener('appinstalled', () => { $('btnInstalar').style.display = 'none'; $('pasos').textContent = '¡Listo! Ya la tienes instalada. Ábrela desde el ícono ⚡ de tu pantalla.'; });
 
-function conLock_(fn) {
-  const l = LockService.getScriptLock();
-  l.waitLock(15000);
-  try { inicializar_(); fn(); } finally { l.releaseLock(); }
-  return getTodo_();
-}
-
-/* =================== Fechas y quincenas =================== */
-
-function clave_(y, m, q) { return y + '-' + ('0' + m).slice(-2) + ' Q' + q; }
-function partes_(k) {
-  const a = String(k).split(' '), ym = a[0].split('-');
-  return { y: Number(ym[0]), m: Number(ym[1]), q: a[1] === 'Q1' ? 1 : 2 };
-}
-function idx_(k) { const p = partes_(k); return p.y * 24 + (p.m - 1) * 2 + (p.q - 1); }
-function deIdx_(i) { const y = Math.floor(i / 24), r = i % 24; return clave_(y, Math.floor(r / 2) + 1, r % 2 + 1); }
-function ordenar_(qs) { return qs.sort((a, b) => String(a.Quincena).localeCompare(String(b.Quincena))); }
-
-function hoyPartes_() { return Utilities.formatDate(new Date(), ZONA, 'yyyy-M-d').split('-').map(Number); }
-function hoyUTC_() { const p = hoyPartes_(); return Date.UTC(p[0], p[1] - 1, p[2]); }
-function pagoUTC_(k, c) {
-  const p = partes_(k), ult = new Date(Date.UTC(p.y, p.m, 0)).getUTCDate();
-  return Date.UTC(p.y, p.m - 1, Math.min(p.q === 1 ? c.diaQ1 : c.diaQ2, ult));
-}
-/** Por calendario: del 1 al día de pago de la 1ra = 1ra quincena; el resto del mes = 2da. */
-function claveActual_(c) {
-  const p = hoyPartes_();
-  return clave_(p[0], p[1], p[2] <= c.diaQ1 ? 1 : 2);
-}
-/** La que elegiste a mano en la app, o la automática. */
-function claveHoy_(c) { return c.actual || claveActual_(c); }
-const RE_CLAVE = /^\d{4}-\d{2} Q[12]$/;
-
-/* =================== Configuración =================== */
-
-function cfg_() {
-  const o = {};
-  leer_('Config').forEach(r => { o[txt_(r.Clave)] = r.Valor; });
-  return {
-    ingreso: Number(o.ingreso) || 1500000,
-    diaQ1: Number(o.diaQ1) || 15,
-    diaQ2: Number(o.diaQ2) || 30,
-    inicio: txt_(o.inicio),
-    actual: RE_CLAVE.test(txt_(o.actual)) ? txt_(o.actual) : '',
-    version: txt_(o.version),
+  function ofrecerInstalar(url) {
+    $('sinInstalar').onclick = () => irDirecto(url);
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    $('pasos').innerHTML = (promptInstalar ? 'O también: ' : '') + (ios
+      ? 'En Safari toca <b>Compartir</b> (el cuadrito con flecha) → <b>Agregar a inicio</b>.'
+      : 'En Chrome toca el menú <b>⋮</b> → <b>Instalar app</b> o <b>Agregar a pantalla principal</b>. En el computador, el ícono de instalar aparece en la barra de direcciones.');
+    $('btnInstalar').style.display = promptInstalar ? '' : 'none';
+    estado('instalar', 'Instala Zero Fugas en tu pantalla. Después ábrela siempre desde el ícono ⚡ y entrará directo.');
+  }
+  $('btnInstalar').onclick = async () => {
+    if (!promptInstalar) return;
+    promptInstalar.prompt();
+    try { await promptInstalar.userChoice; } catch (e) {}
+    promptInstalar = null; $('btnInstalar').style.display = 'none';
   };
-}
-function setCfg_(c) {
-  escribir_('Config', ['ingreso', 'diaQ1', 'diaQ2', 'inicio', 'actual', 'version'].map(k => ({ Clave: k, Valor: String(c[k]) })));
-}
 
-function inicializar_() {
-  const c = cfg_();
-  if (c.version === '3') return;
-  if (c.version === '2') {            // actualización desde la v2: ahora la quincena va por calendario
-    c.version = '3'; c.inicio = claveActual_(c); c.actual = '';
-    setCfg_(c);
-    return;
+  function irDirecto(url) {
+    estado('cargando', 'Abriendo Zero Fugas…');
+    location.replace(url); // sin dejar rastro en el historial: "atrás" cierra la app
   }
-  if (!leer_('Bloques').length) { escribir_('Bloques', BLOQUES_INI); escribir_('Subcategorias', SUBS_INI); }
-  const n = { ingreso: c.ingreso, diaQ1: c.diaQ1, diaQ2: c.diaQ2, actual: '', version: '3' };
-  n.inicio = claveActual_(n);
-  setCfg_(n);
-  const y = hoyPartes_()[0];
-  crearRango_(n, clave_(y, 1, 1), clave_(y, 12, 2));
-}
 
-/* =================== Lectura general =================== */
+  let timer = null;
+  function estado(cual, texto) {
+    $('cargando').classList.toggle('hidden', cual !== 'cargando');
+    $('config').classList.toggle('hidden', cual !== 'config');
+    $('fallo').classList.toggle('hidden', cual !== 'fallo');
+    $('instalar').classList.toggle('hidden', cual !== 'instalar');
+    $('msg').textContent = texto;
+  }
 
-function activas_() {
-  const bl = mapa_(leer_('Bloques'));
-  return leer_('Subcategorias')
-    .filter(s => txt_(s.Activa) !== 'no' && bl[txt_(s.BloqueId)])
-    .sort((a, b) =>
-      ((Number(bl[txt_(a.BloqueId)].Orden) || 0) - (Number(bl[txt_(b.BloqueId)].Orden) || 0)) ||
-      ((Number(a.Orden) || 0) - (Number(b.Orden) || 0)));
-}
+  function pedirLink() {
+    $('panel').classList.remove('off'); $('app').classList.remove('on');
+    estado('config', 'Pega una sola vez el link de tu app (Apps Script → Implementar → Gestionar implementaciones). Queda guardado en este celular.');
+  }
 
-function movDe_(k, s, bl) {
-  const b = bl[txt_(s.BloqueId)];
-  return {
-    Quincena: k, SubId: txt_(s.Id), Bloque: b ? b.Nombre : '', Subcategoria: s.Nombre, Tipo: s.Tipo,
-    Monto: Number(s.Sugerido) || 0, Estado: 'pendiente', FechaEstado: '',
+  function abrir() {
+    const url = leer();
+    if (!valido(url)) return pedirLink();
+    if (!navigator.onLine) return estado('fallo', 'Sin internet. Conéctate y toca Reintentar.');
+    $('directo').href = url;
+    $('panel').classList.remove('off'); $('app').classList.remove('on');
+    if (modo() === 'directo') return instalada() ? irDirecto(url) : ofrecerInstalar(url);
+    estado('cargando', 'Cargando…');
+    $('app').src = url;
+    clearTimeout(timer);
+    // Si Google no deja abrirla por dentro, se cambia sola a modo directo y lo recuerda.
+    timer = setTimeout(() => { setModo('directo'); instalada() ? irDirecto(url) : ofrecerInstalar(url); }, 8000);
+  }
+
+  window.addEventListener('message', e => {
+    let host = '';
+    try { host = new URL(e.origin).hostname; } catch (er) {}
+    if (e.data === 'zero-fugas-ok' && (host.endsWith('.googleusercontent.com') || host === 'script.google.com')) {
+      clearTimeout(timer); setModo('dentro');
+      $('app').classList.add('on'); $('panel').classList.add('off');
+    }
+  });
+
+  $('guardar').onclick = () => {
+    const u = limpiar($('link').value);
+    if (!valido(u)) {
+      $('msg').textContent = /\/dev(\?|$)/.test(u)
+        ? 'Ese es el link de prueba (/dev). Usa el de "Gestionar implementaciones", que termina en /exec.'
+        : 'Ese link no parece el de tu app. Cópialo en Apps Script → Implementar → Gestionar implementaciones → URL de la aplicación web (termina en /exec).';
+      return;
+    }
+    guardar(u); abrir();
   };
-}
+  $('reintentar').onclick = abrir;
+  window.addEventListener('online', () => { if (!$('app').classList.contains('on')) abrir(); });
 
-function correo_() { try { return Session.getEffectiveUser().getEmail(); } catch (e) { return ''; } }
-function url_() { try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; } }
-function hayTrigger_() {
-  try { return ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'revisarPendientes'); }
-  catch (e) { return false; }
-}
-
-function getTodo_() {
-  inicializar_();
-  const c = cfg_();
-  return {
-    config: c,
-    hoy: claveHoy_(c),
-    auto: claveActual_(c),
-    bloques: leer_('Bloques'),
-    subs: leer_('Subcategorias'),
-    quincenas: leer_('Quincenas'),
-    movs: leer_('Movimientos'),
-    motivos: leer_('Motivos'),
-    retiros: leer_('Retiros'),
-    recordatorios: hayTrigger_(),
-    correo: correo_(),
-  };
-}
-
-/* =================== Quincenas =================== */
-
-function crearRango_(c, desde, hasta) {
-  const qs = leer_('Quincenas'), ex = {};
-  qs.forEach(q => { ex[txt_(q.Quincena)] = true; });
-  const movs = leer_('Movimientos'), bl = mapa_(leer_('Bloques')), subs = activas_(), ahora = ahora_();
-  let n = 0;
-  for (let i = idx_(desde); i <= idx_(hasta); i++) {
-    const k = deIdx_(i);
-    if (ex[k]) continue;
-    qs.push({ Quincena: k, Ingreso: c.ingreso, Creada: ahora });
-    subs.forEach(s => movs.push(movDe_(k, s, bl)));
-    n++;
-  }
-  if (n) { escribir_('Quincenas', ordenar_(qs)); escribir_('Movimientos', movs); }
-  return n;
-}
-
-function crearAnio_(y) {
-  y = Number(y);
-  if (!(y > 2000 && y < 2100)) throw new Error('Año no válido');
-  return conLock_(() => { crearRango_(cfg_(), clave_(y, 1, 1), clave_(y, 12, 2)); });
-}
-
-function crearQuincena_(k) { return guardarQuincena_(k, cfg_().ingreso, null); }
-
-/** montos: { subId: monto } o null para usar los montos sugeridos */
-function guardarQuincena_(k, ingreso, montos) {
-  k = txt_(k);
-  return conLock_(() => {
-    const qs = leer_('Quincenas');
-    let q = qs.find(x => txt_(x.Quincena) === k);
-    if (!q) { q = { Quincena: k, Creada: ahora_() }; qs.push(q); }
-    q.Ingreso = Number(ingreso) || 0;
-
-    const movs = leer_('Movimientos'), bl = mapa_(leer_('Bloques'));
-    const resto = movs.filter(m => txt_(m.Quincena) !== k);
-    const previos = {};
-    movs.filter(m => txt_(m.Quincena) === k).forEach(m => { previos[txt_(m.SubId)] = m; });
-
-    const nuevos = activas_().map(s => {
-      const id = txt_(s.Id), prev = previos[id], m = movDe_(k, s, bl);
-      if (prev) { m.Estado = txt_(prev.Estado) || 'pendiente'; m.FechaEstado = prev.FechaEstado || ''; m.Monto = Number(prev.Monto) || 0; delete previos[id]; }
-      if (montos && montos[id] != null) m.Monto = Number(montos[id]) || 0;
-      return m;
-    });
-    Object.keys(previos).forEach(id => nuevos.push(previos[id])); // subcategorías ya eliminadas: se conservan
-
-    escribir_('Quincenas', ordenar_(qs));
-    escribir_('Movimientos', resto.concat(nuevos));
-  });
-}
-
-function borrarQuincena_(k) {
-  k = txt_(k);
-  return conLock_(() => {
-    escribir_('Quincenas', leer_('Quincenas').filter(x => txt_(x.Quincena) !== k));
-    escribir_('Movimientos', leer_('Movimientos').filter(x => txt_(x.Quincena) !== k));
-    escribir_('Motivos', leer_('Motivos').filter(x => txt_(x.Quincena) !== k));
-  });
-}
-
-/** estado: 'hecho' | 'no' | 'pendiente' */
-/** monto (opcional): el valor real que pagaste o ahorraste */
-function marcar_(k, subId, estado, motivo, monto) {
-  k = txt_(k); subId = txt_(subId);
-  if (['hecho', 'no', 'pendiente'].indexOf(estado) < 0) throw new Error('Estado no válido');
-  return conLock_(() => {
-    const m = leer_('Movimientos').find(x => txt_(x.Quincena) === k && txt_(x.SubId) === subId);
-    if (!m) throw new Error('No encontré ese registro. Recarga la app.');
-    const valor = (monto != null && monto !== '') ? (Number(monto) || 0) : (Number(m.Monto) || 0);
-    m.Monto = valor;
-    hoja_('Movimientos').getRange(m._fila, 6, 1, 3).setValues([[valor, estado, estado === 'pendiente' ? '' : ahora_()]]);
-    if (estado === 'no' && txt_(motivo)) {
-      hoja_('Motivos').appendRow([uid_(), ahora_(), k, subId, m.Subcategoria, Number(m.Monto) || 0, txt_(motivo).slice(0, 1000)]);
-    }
-  });
-}
-
-/* =================== Categorías =================== */
-
-function guardarBloque_(b) {
-  return conLock_(() => {
-    const bs = leer_('Bloques');
-    let x = b.Id ? bs.find(r => txt_(r.Id) === txt_(b.Id)) : null;
-    if (!x) {
-      x = { Id: uid_(), Orden: bs.reduce((mx, r) => Math.max(mx, Number(r.Orden) || 0), 0) + 1 };
-      bs.push(x);
-    }
-    x.Nombre = txt_(b.Nombre);
-    if (!x.Nombre) throw new Error('Ponle un nombre a la categoría');
-    x.Icono = txt_(b.Icono) || '📁';
-    x.Color = txt_(b.Color) || '#8b919e';
-    escribir_('Bloques', bs);
-  });
-}
-
-function borrarBloque_(id) {
-  id = txt_(id);
-  return conLock_(() => {
-    if (activas_().some(s => txt_(s.BloqueId) === id)) {
-      throw new Error('Primero elimina o mueve las subcategorías de esta categoría');
-    }
-    escribir_('Bloques', leer_('Bloques').filter(b => txt_(b.Id) !== id));
-  });
-}
-
-/** aplicar: si true, actualiza el monto en las quincenas pendientes desde la actual */
-function guardarSub_(s, aplicar) {
-  return conLock_(() => {
-    const bl = mapa_(leer_('Bloques'));
-    const nombre = txt_(s.Nombre), tipo = txt_(s.Tipo), bId = txt_(s.BloqueId);
-    if (!nombre) throw new Error('Ponle un nombre a la subcategoría');
-    if (!bl[bId]) throw new Error('Elige una categoría');
-    if (TIPOS.indexOf(tipo) < 0) throw new Error('Tipo no válido');
-
-    const subs = leer_('Subcategorias');
-    let x = s.Id ? subs.find(r => txt_(r.Id) === txt_(s.Id)) : null;
-    if (!x) {
-      x = { Id: uid_(), Orden: subs.reduce((mx, r) => Math.max(mx, Number(r.Orden) || 0), 0) + 1 };
-      subs.push(x);
-    }
-    x.BloqueId = bId; x.Nombre = nombre; x.Tipo = tipo; x.Activa = 'si';
-    x.Sugerido = Number(s.Sugerido) || 0;
-    x.TotalCredito = tipo === 'credito' ? (Number(s.TotalCredito) || 0) : 0;
-    x.Inicial = tipo === 'gasto' ? 0 : (Number(s.Inicial) || 0);
-    escribir_('Subcategorias', subs);
-
-    // Llevarla a las quincenas desde la actual
-    const actual = claveHoy_(cfg_()), id = txt_(x.Id);
-    const movs = leer_('Movimientos');
-    leer_('Quincenas').map(q => txt_(q.Quincena)).filter(k => k >= actual).forEach(k => {
-      const m = movs.find(mm => txt_(mm.Quincena) === k && txt_(mm.SubId) === id);
-      if (!m) { movs.push(movDe_(k, x, bl)); return; }
-      m.Subcategoria = x.Nombre; m.Tipo = x.Tipo; m.Bloque = bl[bId].Nombre;
-      if (aplicar && txt_(m.Estado) === 'pendiente') m.Monto = x.Sugerido;
-    });
-    escribir_('Movimientos', movs);
-  });
-}
-
-function archivarSub_(id) {
-  id = txt_(id);
-  return conLock_(() => {
-    const subs = leer_('Subcategorias');
-    const x = subs.find(r => txt_(r.Id) === id);
-    if (!x) throw new Error('No encontré esa subcategoría');
-    x.Activa = 'no';
-    escribir_('Subcategorias', subs);
-    const actual = claveHoy_(cfg_());
-    escribir_('Movimientos', leer_('Movimientos').filter(m =>
-      !(txt_(m.SubId) === id && txt_(m.Quincena) >= actual && txt_(m.Estado) === 'pendiente')));
-  });
-}
-
-/* =================== Retiros de ahorro =================== */
-
-function registrarRetiro_(subId, monto, nota) {
-  subId = txt_(subId); monto = Number(monto) || 0;
-  if (monto <= 0) throw new Error('Escribe cuánto sacaste');
-  return conLock_(() => {
-    const s = leer_('Subcategorias').find(r => txt_(r.Id) === subId);
-    if (!s) throw new Error('Elige la cajita');
-    hoja_('Retiros').appendRow([uid_(), ahora_(), subId, s.Nombre, monto, txt_(nota).slice(0, 500)]);
-  });
-}
-
-/* =================== Motivos / notas =================== */
-
-/** Nota libre escrita a mano (sin pago asociado). */
-function crearNota_(texto) {
-  texto = txt_(texto).slice(0, 1000);
-  if (!texto) throw new Error('Escribe la nota');
-  return conLock_(() => {
-    hoja_('Motivos').appendRow([uid_(), ahora_(), claveHoy_(cfg_()), '', 'Nota', 0, texto]);
-  });
-}
-
-/** Cambia el texto de un motivo o nota. */
-function editarMotivo_(id, texto) {
-  id = txt_(id); texto = txt_(texto).slice(0, 1000);
-  if (!texto) throw new Error('La nota no puede quedar vacía');
-  return conLock_(() => {
-    const m = leer_('Motivos').find(r => txt_(r.Id) === id);
-    if (!m) throw new Error('No encontré esa nota. Recarga la app.');
-    hoja_('Motivos').getRange(m._fila, 7).setValues([[texto]]);
-  });
-}
-
-/** Cuando la cumples, se elimina. */
-function borrarMotivo_(id) {
-  id = txt_(id);
-  if (!id) throw new Error('Nota no válida');
-  return conLock_(() => { escribir_('Motivos', leer_('Motivos').filter(r => txt_(r.Id) !== id)); });
-}
-
-function borrarRetiro_(id) {
-  id = txt_(id);
-  return conLock_(() => { escribir_('Retiros', leer_('Retiros').filter(r => txt_(r.Id) !== id)); });
-}
-
-/* =================== Ajustes =================== */
-
-/** Cambia el valor de un ítem sin marcarlo. */
-function setMonto_(k, subId, monto) {
-  k = txt_(k); subId = txt_(subId);
-  return conLock_(() => {
-    const m = leer_('Movimientos').find(x => txt_(x.Quincena) === k && txt_(x.SubId) === subId);
-    if (!m) throw new Error('No encontré ese registro. Recarga la app.');
-    hoja_('Movimientos').getRange(m._fila, 6).setValues([[Number(monto) || 0]]);
-  });
-}
-
-/** k = '' para volver a automática */
-function setActual_(k) {
-  k = txt_(k);
-  if (k && !RE_CLAVE.test(k)) throw new Error('Quincena no válida');
-  return conLock_(() => { const c = cfg_(); c.actual = k; setCfg_(c); });
-}
-
-function guardarConfig_(o) {
-  const q1 = Number(o.diaQ1), q2 = Number(o.diaQ2), ing = Number(o.ingreso);
-  if (!(q1 >= 1 && q1 <= 28)) throw new Error('El día de la 1ra quincena debe estar entre 1 y 28');
-  if (!(q2 > q1 && q2 <= 31)) throw new Error('El día de la 2da quincena debe ser mayor que el de la 1ra');
-  return conLock_(() => {
-    const c = cfg_();
-    c.diaQ1 = q1; c.diaQ2 = q2; c.ingreso = ing >= 0 ? ing : c.ingreso;
-    if (o.actual != null) { const a = txt_(o.actual); if (a && !RE_CLAVE.test(a)) throw new Error('Quincena no válida'); c.actual = a; }
-    if (o.inicio != null && RE_CLAVE.test(txt_(o.inicio))) c.inicio = txt_(o.inicio);
-    setCfg_(c);
-    // El ingreso de Ajustes también se aplica a la quincena actual y a las futuras (las pasadas no se tocan).
-    if (ing >= 0) {
-      const desde = claveHoy_(c), qs = leer_('Quincenas');
-      let cambio = false;
-      qs.forEach(q => { if (txt_(q.Quincena) >= desde && Number(q.Ingreso) !== ing) { q.Ingreso = ing; cambio = true; } });
-      if (cambio) escribir_('Quincenas', ordenar_(qs));
-    }
-  });
-}
-
-function reiniciar_(confirmacion) {
-  if (confirmacion !== 'BORRAR') throw new Error('No se borró nada');
-  return conLock_(() => {
-    ['Quincenas', 'Movimientos', 'Motivos', 'Retiros'].forEach(n => escribir_(n, []));
-    const c = cfg_();
-    c.inicio = claveHoy_(c);
-    setCfg_(c);
-    const y = hoyPartes_()[0];
-    crearRango_(c, clave_(y, 1, 1), clave_(y, 12, 2));
-  });
-}
-
-/* =================== Recordatorios por correo =================== */
-
-function setRecordatorios_(on) {
-  ScriptApp.getProjectTriggers()
-    .filter(t => t.getHandlerFunction() === 'revisarPendientes')
-    .forEach(t => ScriptApp.deleteTrigger(t));
-  if (on) ScriptApp.newTrigger('revisarPendientes').timeBased().everyDays(1).atHour(8).create();
-  return getTodo_();
-}
-
-/** Pendientes con monto, desde que empezaste a usar la app, 2 días después del día de pago. */
-function pendientes_() {
-  const c = cfg_(), hoy = hoyUTC_(), out = {};
-  leer_('Movimientos').forEach(m => {
-    const k = txt_(m.Quincena);
-    if (k < c.inicio || txt_(m.Estado) !== 'pendiente' || !(Number(m.Monto) > 0)) return;
-    const pago = pagoUTC_(k, c);
-    if (hoy < pago + 2 * DIA || hoy > pago + 60 * DIA) return;
-    (out[k] = out[k] || []).push(m);
-  });
-  return out;
-}
-
-function etiqueta_(k) {
-  const p = partes_(k), M = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-  return (p.q === 1 ? '1ra' : '2da') + ' quincena · ' + M[p.m - 1] + ' ' + p.y;
-}
-function plata_(n) { return '$' + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
-
-function correoPendientes_(p, prueba) {
-  const ks = Object.keys(p).sort();
-  let html = '<div style="font-family:Arial,sans-serif;font-size:15px;color:#222">';
-  if (prueba) html += '<p><b>Correo de prueba.</b> Así te llegarán los recordatorios.</p>';
-  if (!ks.length) {
-    html += '<p>Ahora mismo no tienes pagos ni ahorros vencidos sin confirmar. 👌</p>';
-  } else {
-    html += '<p>Tienes pagos o ahorros <b>sin confirmar</b>. Entra a la app y dale ✓ si ya lo hiciste, ' +
-            'o ✗ y escribe el motivo si no lo hiciste.</p>';
-    ks.forEach(k => {
-      html += '<p style="margin:14px 0 4px"><b>' + etiqueta_(k) + '</b></p><ul style="margin:0">';
-      p[k].forEach(m => {
-        html += '<li>' + m.Subcategoria + ' — ' + plata_(Number(m.Monto)) +
-                (txt_(m.Tipo) === 'ahorro' ? ' <i>(ahorro)</i>' : '') + '</li>';
-      });
-      html += '</ul>';
-    });
-  }
-  const u = url_();
-  if (u) html += '<p style="margin-top:18px"><a href="' + u + '">Abrir Zero Fugas</a></p>';
-  return html + '</div>';
-}
-
-/** La ejecuta el recordatorio diario. */
-function revisarPendientes() {
-  const p = pendientes_(), ks = Object.keys(p);
-  if (!ks.length) return 0;
-  const n = ks.reduce((s, k) => s + p[k].length, 0);
-  MailApp.sendEmail({
-    to: correo_(),
-    subject: '⏰ Zero Fugas: ' + n + (n === 1 ? ' pago o ahorro' : ' pagos o ahorros') + ' sin confirmar',
-    htmlBody: correoPendientes_(p, false),
-  });
-  return n;
-}
-
-function enviarPrueba_() {
-  MailApp.sendEmail({ to: correo_(), subject: '⚡ Zero Fugas: correo de prueba', htmlBody: correoPendientes_(pendientes_(), true) });
-  return correo_();
-}
-
-
-/* =================== PIN de acceso =================== */
-// El PIN se guarda cifrado (hash con sal) en las propiedades privadas del script, nunca en la hoja.
-const PIN_TTL = 20 * 60; // la sesión se cierra tras 20 minutos sin usar la app
-
-function props_() { return PropertiesService.getUserProperties(); }
-function cache_() { return CacheService.getUserCache(); }
-function hash_(pin, sal) {
-  return Utilities.base64Encode(Utilities.computeDigest(
-    Utilities.DigestAlgorithm.SHA_256, sal + '|' + pin, Utilities.Charset.UTF_8));
-}
-function formatoPin_(pin) { if (!/^\d{4}$/.test(String(pin))) throw new Error('El PIN debe tener 4 números'); }
-function nuevoToken_() { const t = Utilities.getUuid(); cache_().put('zf_tok_' + t, '1', PIN_TTL); return t; }
-function verificar_(token) {
-  if (!props_().getProperty('pinHash') || !token || !cache_().get('zf_tok_' + token)) throw new Error('SESION');
-  cache_().put('zf_tok_' + token, '1', PIN_TTL); // cada uso renueva los 20 minutos
-}
-
-/** Si en la pestaña Config escribes la fila  olvidePin | si  el PIN se borra y la app pide crear uno nuevo. */
-function revisarOlvido_() {
-  const f = leer_('Config').find(r => txt_(r.Clave) === 'olvidePin');
-  if (f) {
-    if (txt_(f.Valor).toLowerCase() === 'si') { props_().deleteProperty('pinHash'); props_().deleteProperty('pinSal'); }
-    setCfg_(cfg_()); // quita esa fila
-  }
-}
-
-function pinEstado() {
-  inicializar_();
-  revisarOlvido_();
-  return { tienePin: !!props_().getProperty('pinHash') };
-}
-
-function crearPin(pin) {
-  formatoPin_(pin);
-  if (props_().getProperty('pinHash')) throw new Error('Ya tienes un PIN. Entra con él.');
-  const sal = Utilities.getUuid();
-  props_().setProperties({ pinSal: sal, pinHash: hash_(String(pin), sal) });
-  return nuevoToken_();
-}
-
-/** Revisa el PIN con límite de intentos (5 errores = 5 minutos de bloqueo). */
-function comprobarPin_(pin) {
-  const c = cache_(), fallos = Number(c.get('zf_fallos') || 0);
-  if (fallos >= 5) throw new Error('Demasiados intentos. Espera 5 minutos.');
-  const p = props_(), h = p.getProperty('pinHash');
-  if (!h) throw new Error('Primero crea tu PIN');
-  if (hash_(String(pin), p.getProperty('pinSal')) !== h) {
-    c.put('zf_fallos', String(fallos + 1), 300);
-    const quedan = 4 - fallos;
-    throw new Error(quedan > 0 ? 'PIN incorrecto. Te quedan ' + quedan + (quedan === 1 ? ' intento.' : ' intentos.') : 'Demasiados intentos. Espera 5 minutos.');
-  }
-  c.remove('zf_fallos');
-  return true;
-}
-
-function entrar(pin) { comprobarPin_(pin); return nuevoToken_(); }
-
-/** Para abrir el candado de los valores (con la app ya abierta). */
-function verificarPin_(pin) { return comprobarPin_(pin); }
-
-function salir(token) { if (token) cache_().remove('zf_tok_' + token); return true; }
-
-function cambiarPin_(actual, nuevo) {
-  formatoPin_(nuevo);
-  const p = props_();
-  if (hash_(String(actual), p.getProperty('pinSal')) !== p.getProperty('pinHash')) throw new Error('El PIN actual no es correcto');
-  const sal = Utilities.getUuid();
-  p.setProperties({ pinSal: sal, pinHash: hash_(String(nuevo), sal) });
-  return true;
-}
-
-/** Única puerta de entrada de la pantalla: todo pasa por aquí y exige una sesión con PIN. */
-const PUBLICAS = {
-  getTodo: getTodo_, crearAnio: crearAnio_, crearQuincena: crearQuincena_, guardarQuincena: guardarQuincena_,
-  borrarQuincena: borrarQuincena_, marcar: marcar_, setMonto: setMonto_, setActual: setActual_,
-  guardarBloque: guardarBloque_, borrarBloque: borrarBloque_, guardarSub: guardarSub_, archivarSub: archivarSub_,
-  registrarRetiro: registrarRetiro_, borrarRetiro: borrarRetiro_, crearNota: crearNota_, borrarMotivo: borrarMotivo_, editarMotivo: editarMotivo_, guardarConfig: guardarConfig_, reiniciar: reiniciar_,
-  setRecordatorios: setRecordatorios_, enviarPrueba: enviarPrueba_, cambiarPin: cambiarPin_, verificarPin: verificarPin_, ping: () => true,
-};
-function llamar(token, fn, args) {
-  verificar_(token);
-  const f = PUBLICAS[fn];
-  if (!f) throw new Error('Acción no válida');
-  return f.apply(null, args || []);
-}
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  abrir();
+</script>
+</body>
+</html>
